@@ -8,6 +8,7 @@ import os
 import csv
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
+import re
 
 
 def parse_date_input(date_str):
@@ -434,6 +435,27 @@ def generate_google_calendar_csv(events, start_date, end_date, csv_path):
             })
 
 
+def sanitize_filename(name, max_length=200):
+    """Return a filesystem-safe filename by replacing invalid characters.
+
+    This targets characters invalid on Windows (<>:"/\\|?*) and trims
+    trailing spaces and dots which Windows may reject. It also limits
+    total length to `max_length` characters to avoid issues on some filesystems.
+    """
+    # Replace invalid characters with a hyphen
+    safe = re.sub(r'[<>:\\"/\\|?*]', '-', name)
+    # Replace multiple spaces or hyphens with a single hyphen
+    safe = re.sub(r'[\s\-]+', ' ', safe).strip()
+    # Replace spaces with single spaces, then convert spaces to hyphens for filenames
+    safe = safe.replace(' ', ' ')
+    # Trim trailing dots and spaces
+    safe = safe.rstrip(' .')
+    # Truncate if too long
+    if len(safe) > max_length:
+        safe = safe[:max_length]
+    return safe
+
+
 def main():
     # Feed IDs to iterate through
     feed_ids = [1965, 1178, 3798, 3799, 3767, 3801, 3811, 3247, 3804, 3805, 3806, 3807, 3813, 4897, 3606, 5034]
@@ -514,8 +536,9 @@ def main():
     start_display = start_date.strftime('%m-%d-%Y')
     end_display = end_date.strftime('%m-%d-%Y')
     
-    # Save HTML file with date range in filename
-    html_filename = f"Physics Seminars & Colloquia | {start_display} - {end_display}.html"
+    # Save HTML file with date range in filename (sanitize for Windows)
+    raw_html_filename = f"Physics Seminars & Colloquia | {start_display} - {end_display}.html"
+    html_filename = sanitize_filename(raw_html_filename)
     html_path = os.path.join(output_dir, html_filename)
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_output)
@@ -524,7 +547,8 @@ def main():
     
     # Generate Google Calendar CSV
     print("Generating Google Calendar CSV...")
-    csv_filename = f"Physics Seminars & Colloquia | {start_display} - {end_display}.csv"
+    raw_csv_filename = f"Physics Seminars & Colloquia | {start_display} - {end_display}.csv"
+    csv_filename = sanitize_filename(raw_csv_filename)
     csv_path = os.path.join(output_dir, csv_filename)
     generate_google_calendar_csv(all_events, start_date, end_date, csv_path)
     print(f"CSV output saved to {csv_path}")
