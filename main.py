@@ -8,7 +8,38 @@ import os
 import csv
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-import re
+import time
+import random
+
+
+# Configure session with browser-like headers
+def create_session():
+    """Create a requests session with browser-like headers."""
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+    })
+    return session
+
+
+# Global session object
+SESSION = create_session()
+
+
+def random_delay(min_seconds=0.5, max_seconds=2.0):
+    """Add a random delay to appear more human-like."""
+    time.sleep(random.uniform(min_seconds, max_seconds))
 
 
 def parse_date_input(date_str):
@@ -34,56 +65,83 @@ def parse_iso_datetime(iso_string):
         return None
 
 
-def fetch_rss_feed(url):
-    """Fetch RSS feed from URL."""
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as e:
-        print(f"Error fetching RSS feed: {e}")
-        sys.exit(1)
+def fetch_rss_feed(url, max_retries=3):
+    """Fetch RSS feed from URL with retries."""
+    for attempt in range(max_retries):
+        try:
+            # Add small delay before request
+            if attempt > 0:
+                random_delay(1.0, 3.0)
+            
+            response = SESSION.get(url, timeout=15)
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as e:
+            if attempt < max_retries - 1:
+                print(f"  Retry {attempt + 1}/{max_retries - 1} after error: {e}")
+                continue
+            else:
+                print(f"Error fetching RSS feed after {max_retries} attempts: {e}")
+                sys.exit(1)
 
 
-def fetch_event_detail_page(url):
-    """Fetch event detail page and extract speaker and location info."""
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        speaker = None
-        location = None
-        youtube_link = None
-        
-        # Extract speaker name from .pageTitle > .subtitle
-        page_title = soup.find('div', class_='pageTitle')
-        if page_title:
-            subtitle = page_title.find('div', class_='subtitle')
-            if subtitle:
-                speaker = subtitle.get_text(strip=True)
-        
-        # Extract location from .event-detail-float .place
-        event_detail_float = soup.find('div', class_='event-detail-float')
-        if event_detail_float:
-            place = event_detail_float.find('div', class_='place')
-            if place:
-                location = place.get_text(strip=True)
-        
-        # Extract YouTube link from description
-        event_detail_wrap = soup.find('div', class_='event-detail-wrap')
-        if event_detail_wrap:
-            description_wrap = event_detail_wrap.find('div', class_='description-wrap')
-            if description_wrap:
-                # Look for YouTube link
-                youtube_match = re.search(r'https://(?:www\.)?youtu\.be/[^\s<"]*', description_wrap.get_text())
-                if youtube_match:
-                    youtube_link = youtube_match.group(0)
-        
-        return speaker, location, youtube_link
-    except Exception as e:
-        # Silently skip errors when fetching detail pages
-        return None, None, None
+def fetch_event_detail_page(url, max_retries=3):
+    """Fetch event detail page and extract speaker and location info with retries."""
+    for attempt in range(max_retries):
+        try:
+            # Add random delay between requests to be polite
+            random_delay(0.3, 1.0)
+            
+            response = SESSION.get(url, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            speaker = None
+            location = None
+            youtube_link = None
+            
+            # Extract speaker name from .pageTitle > .subtitle
+            page_title = soup.find('div', class_='pageTitle')
+            if page_title:
+                subtitle = page_title.find('div', class_='subtitle')
+                if subtitle:
+                    speaker = subtitle.get_text(strip=True)
+            
+            # Extract location from .event-detail-float .place
+            event_detail_float = soup.find('div', class_='event-detail-float')
+            if event_detail_float:
+                place = event_detail_float.find('div', class_='place')
+                if place:
+                    location = place.get_text(strip=True)
+            
+            # Extract YouTube link from description
+            event_detail_wrap = soup.find('div', class_='event-detail-wrap')
+            if event_detail_wrap:
+                description_wrap = event_detail_wrap.find('div', class_='description-wrap')
+                if description_wrap:
+                    # Look for YouTube link
+                    youtube_match = re.search(r'https://(?:www\.)?youtu\.be/[^\s<"]*', description_wrap.get_text())
+                    if youtube_match:
+                        youtube_link = youtube_match.group(0)
+            
+            return speaker, location, youtube_link
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                print(f"    Timeout, retrying ({attempt + 1}/{max_retries - 1})...")
+                continue
+            else:
+                print(f"    Timeout after {max_retries} attempts, skipping...")
+                return None, None, None
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                print(f"    Error: {e}, retrying ({attempt + 1}/{max_retries - 1})...")
+                continue
+            else:
+                print(f"    Error after {max_retries} attempts, skipping...")
+                return None, None, None
+        except Exception as e:
+            # Silently skip parsing errors
+            return None, None, None
 
 
 def parse_rss_feed(rss_content):
@@ -472,6 +530,8 @@ def main():
             events = parse_rss_feed(rss_content)
             print(f"  Found {len(events)} events")
             all_events.extend(events)
+            # Add delay between feed fetches
+            random_delay(0.5, 1.5)
         except SystemExit:
             print(f"  Error fetching feed ID {feed_id}, skipping...")
             continue
